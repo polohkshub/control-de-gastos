@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
-const CATEGORIES = ["casa", "personal", "ocio", "comida", "eventuales", "lolo"];
+const CATEGORIES = ["casa", "personal", "auto", "comida", "eventuales", "lolo"];
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
