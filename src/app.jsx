@@ -1,9 +1,9 @@
-
 import React, { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 
 const CATEGORIES = ["casa", "personal", "ocio", "comida", "eventuales", "lolo"];
-
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const formatARS = (n) =>
   new Intl.NumberFormat("es-AR", {
@@ -12,21 +12,43 @@ const formatARS = (n) =>
     maximumFractionDigits: 0,
   }).format(Number(n || 0));
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+function exportResumenXLSX({ from, to, filtered, totalsByCat, total }) {
+  const wb = XLSX.utils.book_new();
 
-function downloadFile(filename, content, mime = "text/plain") {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  // Hoja 1: Resumen
+  const resumenData = [
+    ["RESUMEN DE GASTOS"],
+    ["Desde", from],
+    ["Hasta", to],
+    [""],
+    ["TOTAL", total],
+    [""],
+    ["TOTALES POR CATEGORÍA"],
+    ...Object.entries(totalsByCat).map(([cat, val]) => [cat.toUpperCase(), val]),
+  ];
+  const wsResumen = XLSX.utils.aoa_to_sheet(resumenData);
+  XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
+
+  // Hoja 2: Detalle
+  const detalle = filtered
+    .slice()
+    .sort((a, b) => (a.date > b.date ? 1 : -1))
+    .map((it) => ({
+      Fecha: it.date,
+      Categoria: it.category.toUpperCase(),
+      Monto: Number(it.amount || 0),
+      Descripcion: it.desc || "",
+    }));
+
+  const wsDetalle = XLSX.utils.json_to_sheet(detalle);
+  XLSX.utils.book_append_sheet(wb, wsDetalle, "Detalle");
+
+  XLSX.writeFile(wb, `resumen_gastos_${from}_a_${to}.xlsx`);
 }
 
 export default function App() {
   const [items, setItems] = useState([]);
-  const [savedMonths, setSavedMonths] = useState({}); // { "Enero 2026": [...] }
+  const [savedMonths, setSavedMonths] = useState({});
 
   // formulario
   const [amount, setAmount] = useState("");
@@ -58,12 +80,10 @@ export default function App() {
   const filtered = useMemo(() => {
     const f = new Date(from + "T00:00:00");
     const t = new Date(to + "T23:59:59");
-    return items
-      .filter((it) => {
-        const d = new Date(it.date + "T12:00:00");
-        return d >= f && d <= t;
-      })
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    return items.filter((it) => {
+      const d = new Date(it.date + "T12:00:00");
+      return d >= f && d <= t;
+    });
   }, [items, from, to]);
 
   const total = useMemo(
@@ -101,37 +121,10 @@ export default function App() {
     setItems((prev) => prev.filter((x) => x.id !== id));
   }
 
-  function exportJSON() {
-    const data = {
-      exportedAt: new Date().toISOString(),
-      items,
-    };
-    downloadFile("gastos_export.json", JSON.stringify(data, null, 2), "application/json");
-  }
-
-  function exportCSV() {
-    const header = ["date", "category", "amount", "desc"];
-    const rows = items.map((it) => [
-      it.date,
-      it.category,
-      String(it.amount).replace(".", ","),
-      (it.desc || "").replaceAll('"', '""'),
-    ]);
-    const csv =
-      header.join(",") +
-      "\n" +
-      rows.map((r) => `"${r[0]}","${r[1]}","${r[2]}","${r[3]}"`).join("\n");
-
-    downloadFile("gastos_export.csv", csv, "text/csv");
-  }
-
   function saveMonthSnapshot() {
     const name = prompt("Nombre del mes (ej: Enero 2026):");
     if (!name) return;
-    setSavedMonths((prev) => ({
-      ...prev,
-      [name]: items,
-    }));
+    setSavedMonths((prev) => ({ ...prev, [name]: items }));
     alert(`Guardado: ${name} ✅`);
   }
 
@@ -147,6 +140,20 @@ export default function App() {
   function clearAll() {
     if (!confirm("¿Borrar TODOS los gastos?")) return;
     setItems([]);
+  }
+
+  function exportResumen() {
+    exportResumenXLSX({
+      from,
+      to,
+      filtered,
+      totalsByCat,
+      total,
+    });
+  }
+
+  function guardar() {
+    saveMonthSnapshot();
   }
 
   return (
@@ -210,17 +217,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="actions">
-            <button className="btn" onClick={exportCSV}>Exportar CSV</button>
-            <button className="btn" onClick={exportJSON}>Exportar JSON</button>
-          </div>
-
-          <div className="actions">
-            <button className="btn" onClick={saveMonthSnapshot}>Guardar mes</button>
-            <button className="btn" onClick={loadMonthSnapshot}>Cargar mes</button>
-          </div>
-
-          <button className="btn danger" onClick={clearAll}>
+          <button className="btn danger" onClick={clearAll} style={{ marginTop: 10 }}>
             Borrar todo
           </button>
         </section>
@@ -253,35 +250,55 @@ export default function App() {
               ))}
             </div>
           </div>
+
+          {/* EXPORTAR debajo del resumen */}
+          <div className="actionsOne" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={exportResumen}>
+              Exportar resumen a Excel (.xlsx)
+            </button>
+          </div>
         </section>
 
         <section className="card full">
-          <h2>🧾 Gastos</h2>
+          <h2>🧾 Gastos (rango seleccionado)</h2>
 
           {filtered.length === 0 ? (
             <div className="empty">No hay gastos en ese rango 🙂</div>
           ) : (
             <div className="list">
-              {filtered.map((it) => (
-                <div key={it.id} className="item">
-                  <div className="left">
-                    <div className="date">{it.date}</div>
-                    <div className="desc">{it.desc || "—"}</div>
-                    <div className="cat">{it.category.toUpperCase()}</div>
-                  </div>
+              {filtered
+                .slice()
+                .sort((a, b) => (a.date < b.date ? 1 : -1))
+                .map((it) => (
+                  <div key={it.id} className="item">
+                    <div className="left">
+                      <div className="date">{it.date}</div>
+                      <div className="desc">{it.desc || "—"}</div>
+                      <div className="cat">{it.category.toUpperCase()}</div>
+                    </div>
 
-                  <div className="right">
-                    <div className="amt">{formatARS(it.amount)}</div>
-                    <button className="mini" onClick={() => removeExpense(it.id)}>
-                      🗑
-                    </button>
+                    <div className="right">
+                      <div className="amt">{formatARS(it.amount)}</div>
+                      <button className="mini" onClick={() => removeExpense(it.id)}>
+                        🗑
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           )}
 
-          <div className="footerNote">Para jugar en familia (y no discutir 😄)</div>
+          {/* UN SOLO BOTÓN AL FINAL */}
+          <div style={{ marginTop: 12 }} className="actionsOne">
+            <button className="btn primary" onClick={guardar}>
+              GUARDAR
+            </button>
+            <button className="btn" onClick={loadMonthSnapshot}>
+              Cargar mes
+            </button>
+          </div>
+
+          <div className="footerNote">Hecho para vos 💙</div>
         </section>
       </main>
     </div>
